@@ -16,9 +16,51 @@
           경과월수만큼 상환했다고 가정하고 남은 잔액을 저당액으로 사용
 """
 
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import date
+
+
+# ----------------------------
+# 고해상도(HiDPI) 모니터 대응
+#   - 모니터를 바꾼 뒤 글자/버튼이 뿌옇게 번지는 현상(화질 저하)은
+#     프로세스가 DPI 인식을 하지 않아 Windows가 저해상도 화면을
+#     강제로 확대해서 그리기 때문입니다.
+#   - Tk를 만들기 '전에' 프로세스를 DPI 인식으로 설정하면 원래 해상도
+#     그대로 선명하게 렌더링됩니다.
+# ----------------------------
+
+def enable_hidpi():
+    """Windows에서 프로세스를 per-monitor DPI 인식으로 설정한다.
+
+    반환값: 96DPI 기준 배율(scale factor). 실패 시 1.0.
+    """
+    if not sys.platform.startswith("win"):
+        return 1.0
+
+    import ctypes
+
+    # 1) DPI 인식 활성화 (가능한 최신 API부터 시도)
+    try:
+        # PER_MONITOR_AWARE_V2 (-4): 가장 선명, Win10 1703+
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(-4)
+    except Exception:
+        try:
+            # PER_MONITOR_AWARE (2): Win8.1+
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()  # 구형 폴백
+            except Exception:
+                pass
+
+    # 2) 현재 모니터의 실제 배율 계산 (96DPI = 100%)
+    try:
+        dpi = ctypes.windll.user32.GetDpiForSystem()
+        return max(1.0, dpi / 96.0)
+    except Exception:
+        return 1.0
 
 
 # ----------------------------
@@ -123,43 +165,174 @@ def parse_date(s: str) -> date:
 # GUI
 # ----------------------------
 
+# 색상 팔레트 (sRGB 표준값 기준 - 모니터가 달라도 일관된 색감)
+# 라이트/다크 두 벌을 정의하고, 실행 중 토글로 전환한다.
+THEMES = {
+    "light": {
+        "BG":          "#eef1f6",   # 앱 배경
+        "CARD":        "#ffffff",   # 입력/결과 카드 배경
+        "PRIMARY":     "#2563eb",   # 메인 파랑 (버튼)
+        "PRIMARY_ACT": "#1d4ed8",
+        "TEXT":        "#1f2933",   # 기본 글자색 (대비 높음)
+        "MUTED":       "#6b7280",   # 보조 글자색
+        "BORDER":      "#cbd5e1",   # 테두리
+        "DISABLED_BG": "#f1f3f7",   # 비활성 입력칸 배경
+        "TOGGLE_ICON": "◐ 다크 모드",   # 라이트일 때: 다크로 전환 버튼
+    },
+    "dark": {
+        "BG":          "#1e2430",
+        "CARD":        "#262d3a",
+        "PRIMARY":     "#3b82f6",
+        "PRIMARY_ACT": "#2563eb",
+        "TEXT":        "#e5e9f0",
+        "MUTED":       "#9aa4b2",
+        "BORDER":      "#3a4453",
+        "DISABLED_BG": "#2a313d",
+        "TOGGLE_ICON": "◑ 라이트 모드",   # 다크일 때: 라이트로 전환 버튼
+    },
+}
+
+
 class MortgageApp(tk.Tk):
-    def __init__(self):
+    def __init__(self, scale: float = 1.0, theme: str = "light"):
         super().__init__()
+
+        # 화면 배율에 맞춰 Tk 폰트/위젯 스케일링 (선명도 유지)
+        self.scale = scale
+        try:
+            self.tk.call("tk", "scaling", scale * 96.0 / 72.0)
+        except Exception:
+            pass
+
+        self.theme_name = theme if theme in THEMES else "light"
+        self.colors = THEMES[self.theme_name]
+        self._themed = []            # (위젯, 역할) 목록 - 테마 전환 시 다시 칠함
+        self._amount_placeholder = True
+
         self.title("저당액 계산 프로그램")
-        self.geometry("480x520")
+        w, h = int(480 * scale), int(600 * scale)
+        self.geometry(f"{w}x{h}")
+        self.minsize(w, h)
         self.resizable(False, False)
-        self.configure(bg="#f4f5f7")
 
         self.creditor_var = tk.StringVar(value="은행")  # 기본 선택: 은행
 
+        self.style = ttk.Style()
         self._build_widgets()
+        self._apply_theme()
 
+    def _f(self, size, weight="normal"):
+        """배율을 반영한 폰트 튜플."""
+        return ("맑은 고딕", max(1, int(round(size * self.scale))), weight)
+
+    def _reg(self, widget, role):
+        """테마 대상 위젯을 역할과 함께 등록한다."""
+        self._themed.append((widget, role))
+        return widget
+
+    # ----- 테마 적용 -----
+    def _setup_style(self):
+        c = self.colors
+        try:
+            self.style.theme_use("clam")  # 색상 커스터마이즈가 잘 먹는 테마
+        except Exception:
+            pass
+
+        self.style.configure("TRadiobutton", font=self._f(11),
+                             background=c["BG"], foreground=c["TEXT"],
+                             indicatorcolor=c["CARD"])
+        self.style.map("TRadiobutton",
+                       background=[("active", c["BG"])],
+                       foreground=[("disabled", c["MUTED"])],
+                       indicatorcolor=[("selected", c["PRIMARY"])])
+
+        # 계산 버튼
+        self.style.configure("Accent.TButton", font=self._f(13, "bold"),
+                             foreground="#ffffff", background=c["PRIMARY"],
+                             borderwidth=0, focusthickness=0, padding=(0, 12))
+        self.style.map("Accent.TButton",
+                       background=[("active", c["PRIMARY_ACT"]), ("pressed", c["PRIMARY_ACT"])],
+                       foreground=[("disabled", "#e5e7eb")])
+
+    def _apply_theme(self):
+        c = self.colors
+        self._setup_style()
+        self.configure(bg=c["BG"])
+
+        for w, role in self._themed:
+            if role == "frame":
+                w.configure(bg=c["BG"])
+            elif role == "title":
+                w.configure(bg=c["BG"], fg=c["TEXT"])
+            elif role == "muted":
+                w.configure(bg=c["BG"], fg=c["MUTED"])
+            elif role == "text_label":
+                w.configure(bg=c["BG"], fg=c["TEXT"])
+            elif role == "entry":
+                w.configure(bg=c["CARD"], fg=c["TEXT"],
+                            highlightbackground=c["BORDER"], highlightcolor=c["PRIMARY"],
+                            disabledbackground=c["DISABLED_BG"], insertbackground=c["TEXT"])
+            elif role == "result":
+                w.configure(bg=c["CARD"], fg=c["TEXT"], highlightbackground=c["BORDER"])
+
+        # 상태에 따라 색이 달라지는 위젯들 마무리
+        self.amount_entry.configure(fg=(c["MUTED"] if self._amount_placeholder else c["TEXT"]))
+        self.toggle_btn.configure(text=c["TOGGLE_ICON"], bg=c["BG"], fg=c["TEXT"],
+                                  activebackground=c["BG"], activeforeground=c["PRIMARY"])
+        self._on_creditor_change()
+        self._set_titlebar_dark(self.theme_name == "dark")
+
+    def _toggle_theme(self):
+        self.theme_name = "dark" if self.theme_name == "light" else "light"
+        self.colors = THEMES[self.theme_name]
+        self._apply_theme()
+
+    def _set_titlebar_dark(self, dark: bool):
+        """Windows 제목표시줄도 테마에 맞춰 어둡게/밝게 (Win10 2004+)."""
+        if not sys.platform.startswith("win"):
+            return
+        try:
+            import ctypes
+            self.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+            value = ctypes.c_int(1 if dark else 0)
+            # DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 20, ctypes.byref(value), ctypes.sizeof(value))
+        except Exception:
+            pass
+
+    # ----- 화면 구성 -----
     def _build_widgets(self):
         pad = {"padx": 16, "pady": 6}
 
-        title = tk.Label(self, text="저당액 계산 프로그램", font=("맑은 고딕", 16, "bold"), bg="#f4f5f7")
-        title.pack(pady=(20, 10))
+        # 헤더: 제목 + 우측 테마 토글 버튼
+        header = self._reg(tk.Frame(self), "frame")
+        header.pack(fill="x", padx=16, pady=(18, 6))
+        title = self._reg(tk.Label(header, text="저당액 계산 프로그램", font=self._f(16, "bold")), "title")
+        title.pack(side="left")
+        self.toggle_btn = tk.Button(header, text="", font=self._f(10), relief="flat",
+                                    bd=0, cursor="hand2", takefocus=0,
+                                    command=self._toggle_theme)
+        self.toggle_btn.pack(side="right")
 
         # 채권최고액 입력
-        frame1 = tk.Frame(self, bg="#f4f5f7")
+        frame1 = self._reg(tk.Frame(self), "frame")
         frame1.pack(fill="x", **pad)
-        tk.Label(frame1, text="채권최고액 (원)", font=("맑은 고딕", 11), bg="#f4f5f7").pack(anchor="w")
-        self.amount_entry = tk.Entry(frame1, font=("맑은 고딕", 12))
-        self.amount_entry.pack(fill="x", pady=4)
+        self._reg(tk.Label(frame1, text="채권최고액 (원)", font=self._f(11)), "muted").pack(anchor="w")
+        self.amount_entry = self._reg(
+            tk.Entry(frame1, font=self._f(12), relief="solid", bd=1, highlightthickness=1), "entry")
+        self.amount_entry.pack(fill="x", pady=4, ipady=int(3 * self.scale))
         self.amount_entry.insert(0, "예: 385000000")
         self.amount_entry.bind("<FocusIn>", self._clear_placeholder)
 
         # 근저당권자 구분 - 라디오 버튼(마우스 클릭)
-        frame2 = tk.Frame(self, bg="#f4f5f7")
+        frame2 = self._reg(tk.Frame(self), "frame")
         frame2.pack(fill="x", **pad)
-        tk.Label(frame2, text="근저당권자 구분", font=("맑은 고딕", 11), bg="#f4f5f7").pack(anchor="w")
+        self._reg(tk.Label(frame2, text="근저당권자 구분", font=self._f(11)), "muted").pack(anchor="w")
 
-        radio_frame = tk.Frame(frame2, bg="#f4f5f7")
+        radio_frame = self._reg(tk.Frame(frame2), "frame")
         radio_frame.pack(fill="x", pady=4)
-
-        style = ttk.Style()
-        style.configure("TRadiobutton", font=("맑은 고딕", 11), background="#f4f5f7")
 
         rb_bank = ttk.Radiobutton(
             radio_frame, text="은행", variable=self.creditor_var, value="은행",
@@ -173,53 +346,62 @@ class MortgageApp(tk.Tk):
         rb_loan.pack(side="left")
 
         # 접수일자 입력 (은행 선택시만 활성) - 년/월/일 칸 3개로 분리
-        self.date_frame = tk.Frame(self, bg="#f4f5f7")
+        self.date_frame = self._reg(tk.Frame(self), "frame")
         self.date_frame.pack(fill="x", **pad)
-        self.date_label = tk.Label(self.date_frame, text="접수일자", font=("맑은 고딕", 11), bg="#f4f5f7")
+        self.date_label = self._reg(tk.Label(self.date_frame, text="접수일자", font=self._f(11)), "muted")
         self.date_label.pack(anchor="w")
 
-        date_input_frame = tk.Frame(self.date_frame, bg="#f4f5f7")
+        date_input_frame = self._reg(tk.Frame(self.date_frame), "frame")
         date_input_frame.pack(fill="x", pady=4)
 
-        self.year_entry = tk.Entry(date_input_frame, font=("맑은 고딕", 12), width=6, justify="center")
-        self.year_entry.pack(side="left")
-        tk.Label(date_input_frame, text="년", font=("맑은 고딕", 11), bg="#f4f5f7").pack(side="left", padx=(4, 12))
+        def _mk_date_entry(width):
+            return self._reg(
+                tk.Entry(date_input_frame, font=self._f(12), width=width, justify="center",
+                         relief="solid", bd=1, highlightthickness=1), "entry")
 
-        self.month_entry = tk.Entry(date_input_frame, font=("맑은 고딕", 12), width=4, justify="center")
-        self.month_entry.pack(side="left")
-        tk.Label(date_input_frame, text="월", font=("맑은 고딕", 11), bg="#f4f5f7").pack(side="left", padx=(4, 12))
+        self.year_entry = _mk_date_entry(6)
+        self.year_entry.pack(side="left", ipady=int(2 * self.scale))
+        self._reg(tk.Label(date_input_frame, text="년", font=self._f(11)), "text_label").pack(side="left", padx=(4, 12))
 
-        self.day_entry = tk.Entry(date_input_frame, font=("맑은 고딕", 12), width=4, justify="center")
-        self.day_entry.pack(side="left")
-        tk.Label(date_input_frame, text="일", font=("맑은 고딕", 11), bg="#f4f5f7").pack(side="left", padx=(4, 0))
+        self.month_entry = _mk_date_entry(4)
+        self.month_entry.pack(side="left", ipady=int(2 * self.scale))
+        self._reg(tk.Label(date_input_frame, text="월", font=self._f(11)), "text_label").pack(side="left", padx=(4, 12))
+
+        self.day_entry = _mk_date_entry(4)
+        self.day_entry.pack(side="left", ipady=int(2 * self.scale))
+        self._reg(tk.Label(date_input_frame, text="일", font=self._f(11)), "text_label").pack(side="left", padx=(4, 0))
 
         self.date_widgets = [self.year_entry, self.month_entry, self.day_entry]
 
         # 계산 버튼
-        calc_btn = tk.Button(
-            self, text="계산하기", font=("맑은 고딕", 13, "bold"),
-            bg="#2d6cdf", fg="white", activebackground="#1e54b8",
-            command=self._on_calculate, height=2
+        calc_btn = ttk.Button(
+            self, text="계산하기", style="Accent.TButton",
+            command=self._on_calculate
         )
         calc_btn.pack(fill="x", padx=16, pady=(16, 8))
 
         # 결과 표시 영역
-        self.result_box = tk.Text(self, font=("맑은 고딕", 10), height=10, bg="white", state="disabled")
+        self.result_box = self._reg(
+            tk.Text(self, font=self._f(10), height=10, relief="solid", bd=1,
+                    highlightthickness=1, padx=10, pady=8, state="disabled", wrap="word"), "result")
         self.result_box.pack(fill="both", expand=True, padx=16, pady=(0, 16))
 
     def _clear_placeholder(self, event):
-        if self.amount_entry.get().startswith("예:"):
+        if self._amount_placeholder and self.amount_entry.get().startswith("예:"):
             self.amount_entry.delete(0, "end")
+            self._amount_placeholder = False
+            self.amount_entry.configure(fg=self.colors["TEXT"])
 
     def _on_creditor_change(self):
+        c = self.colors
         if self.creditor_var.get() == "은행":
             for w in self.date_widgets:
                 w.configure(state="normal")
-            self.date_label.configure(fg="black")
+            self.date_label.configure(fg=c["MUTED"])
         else:
             for w in self.date_widgets:
                 w.configure(state="disabled")
-            self.date_label.configure(fg="gray")
+            self.date_label.configure(fg=c["BORDER"])
 
     def _on_calculate(self):
         try:
@@ -277,6 +459,7 @@ class MortgageApp(tk.Tk):
 
 
 if __name__ == "__main__":
-    app = MortgageApp()
+    scale = enable_hidpi()          # DPI 인식 활성화 (Tk 생성 전에 호출해야 함)
+    app = MortgageApp(scale=scale)
     # 초기 상태: 은행 선택이 기본값이므로 날짜 입력 활성화 상태 유지
     app.mainloop()
