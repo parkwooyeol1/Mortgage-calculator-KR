@@ -14,22 +14,38 @@ import base64, io
 #   Tk 생성 전에 DPI 인식을 켜면 원래 해상도로 선명하게 렌더링된다.
 
 def enable_hidpi():
-    """프로세스를 per-monitor DPI 인식으로 설정하고 96DPI 기준 배율을 돌려준다."""
+    """프로세스를 DPI 인식으로 설정하고 96DPI 기준 배율을 돌려준다.
+
+    주의: SetProcessDpiAwarenessContext 는 인자가 HANDLE(void*) 이므로
+    argtypes 를 지정하지 않으면 64비트에서 값이 잘려 호출이 실패한다.
+    (실패하면 앱이 DPI 비인식으로 떠서 고배율 모니터에서 뿌옇게 보인다.)
+    """
     if not sys.platform.startswith("win"):
         return 1.0
     import ctypes
+    u = ctypes.windll.user32
+    done = False
     try:
-        ctypes.windll.user32.SetProcessDpiAwarenessContext(-4)  # PER_MONITOR_AWARE_V2
+        u.SetProcessDpiAwarenessContext.restype = ctypes.c_bool
+        u.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        # PER_MONITOR_AWARE_V2(-4) → PER_MONITOR_AWARE(-3) → SYSTEM_AWARE(-2)
+        for ctx in (-4, -3, -2):
+            if u.SetProcessDpiAwarenessContext(ctypes.c_void_p(ctx)):
+                done = True
+                break
     except Exception:
+        pass
+    if not done:
         try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(2)      # PER_MONITOR_AWARE
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PER_MONITOR_AWARE
+            done = True
         except Exception:
             try:
-                ctypes.windll.user32.SetProcessDPIAware()
+                u.SetProcessDPIAware()
             except Exception:
                 pass
     try:
-        return max(1.0, ctypes.windll.user32.GetDpiForSystem() / 96.0)
+        return max(1.0, u.GetDpiForSystem() / 96.0)
     except Exception:
         return 1.0
 
@@ -85,6 +101,7 @@ THEMES = {
         "BG3":  "#3A3A3C",   # 테두리/비활성
         "OR":   "#FF9F0A",   # 오렌지 강조
         "OR_ACT": "#E8910A",
+        "ACCENT_FG": "#000000",  # 강조색 위 글자(검정 on 오렌지)
         "TXT":  "#FFFFFF",   # 기본 글자
         "TXT2": "#AEAEB2",   # 보조(초기화 버튼)
         "TXT3": "#98989D",   # 라벨 (기존 #636366 → 밝게)
@@ -95,8 +112,9 @@ THEMES = {
         "BG":   "#F2F2F7",
         "BG2":  "#FFFFFF",
         "BG3":  "#C7C7CC",
-        "OR":   "#FF9500",
-        "OR_ACT": "#E8850A",
+        "OR":   "#0A93E8",   # 하늘색 강조 (주황 → 푸른색)
+        "OR_ACT": "#0879C4",
+        "ACCENT_FG": "#FFFFFF",  # 강조색 위 글자(흰색 on 하늘색)
         "TXT":  "#1C1C1E",
         "TXT2": "#3A3A3C",
         "TXT3": "#6C6C70",
@@ -131,7 +149,7 @@ class Toggle(tk.Frame):
     def retheme(self):
         C = self.app.C
         bg = C["OR"] if self._active else C["BG2"]
-        fg = "#000000" if self._active else C["TXT3"]
+        fg = C["ACCENT_FG"] if self._active else C["TXT3"]
         self.configure(bg=bg)
         self._lbl.configure(bg=bg, fg=fg)
 
@@ -336,8 +354,8 @@ class App(tk.Tk):
                             highlightbackground=C["BG3"], highlightcolor=C["OR"],
                             disabledbackground=C["BG2"], disabledforeground=C["TXT4"])
             elif role == "calc":
-                w.configure(bg=C["OR"], fg="#000000",
-                            activebackground=C["OR_ACT"], activeforeground="#000000")
+                w.configure(bg=C["OR"], fg=C["ACCENT_FG"],
+                            activebackground=C["OR_ACT"], activeforeground=C["ACCENT_FG"])
             elif role == "reset":
                 w.configure(bg=C["BG2"], fg=C["TXT2"],
                             activebackground=C["BG3"], activeforeground=C["TXT"])
