@@ -99,9 +99,10 @@ THEMES = {
         "BG":   "#1C1C1E",   # 앱 배경
         "BG2":  "#2C2C2E",   # 입력/버튼 배경
         "BG3":  "#3A3A3C",   # 테두리/비활성
-        "OR":   "#FF9F0A",   # 오렌지 강조
+        "OR":   "#FF9F0A",   # 오렌지 강조(버튼 배경)
         "OR_ACT": "#E8910A",
-        "ACCENT_FG": "#000000",  # 강조색 위 글자(검정 on 오렌지)
+        "ACCENT_FG": "#000000",   # 강조색 위 글자(검정 on 오렌지)
+        "ACCENT_TXT": "#FF9F0A",  # 배경 위 강조 글자(복사 피드백 등)
         "TXT":  "#FFFFFF",   # 기본 글자
         "TXT2": "#AEAEB2",   # 보조(초기화 버튼)
         "TXT3": "#98989D",   # 라벨 (기존 #636366 → 밝게)
@@ -112,9 +113,10 @@ THEMES = {
         "BG":   "#F2F2F7",
         "BG2":  "#FFFFFF",
         "BG3":  "#C7C7CC",
-        "OR":   "#0A93E8",   # 하늘색 강조 (주황 → 푸른색)
-        "OR_ACT": "#0879C4",
-        "ACCENT_FG": "#FFFFFF",  # 강조색 위 글자(흰색 on 하늘색)
+        "OR":   "#8FCFF0",   # 파스텔 하늘색 강조(버튼 배경)
+        "OR_ACT": "#72BCE6",
+        "ACCENT_FG": "#0B3A52",   # 파스텔 위 글자(진한 남색, 대비 확보)
+        "ACCENT_TXT": "#1583C7",  # 배경(흰색) 위 강조 글자(복사 피드백 등)
         "TXT":  "#1C1C1E",
         "TXT2": "#3A3A3C",
         "TXT3": "#6C6C70",
@@ -361,7 +363,7 @@ class App(tk.Tk):
                             activebackground=C["BG3"], activeforeground=C["TXT"])
         # 테마 토글 버튼
         self.theme_btn.configure(text=C["TOGGLE_LABEL"], bg=C["BG"], fg=C["TXT3"],
-                                 activebackground=C["BG"], activeforeground=C["OR"])
+                                 activebackground=C["BG"], activeforeground=C["ACCENT_TXT"])
         # 상태 의존 색(토글/날짜칸) 재적용
         self._sel(self.creditor.get())
 
@@ -450,8 +452,8 @@ class App(tk.Tk):
         C = self.C
         self.clipboard_clear()
         self.clipboard_append(f"{self._res['저당액']:,.0f}")
-        self.num_lbl.configure(fg=C["OR"])
-        self.copy_hint.configure(text="✔ 복사됨", fg=C["OR"])
+        self.num_lbl.configure(fg=C["ACCENT_TXT"])
+        self.copy_hint.configure(text="✔ 복사됨", fg=C["ACCENT_TXT"])
         self.after(1500, lambda: [
             self.num_lbl.configure(fg=self.C["TXT"]),
             self.copy_hint.configure(text="숫자를 클릭하면 복사됩니다", fg=self.C["TXT4"])
